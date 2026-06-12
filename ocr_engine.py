@@ -23,20 +23,95 @@ from PIL import Image
 
 logger = logging.getLogger("ocr_engine")
 
+# ===========================================================================
+# FIX 1 — GPU verification on startup
+# ===========================================================================
+def verify_cuda():
+    """
+    Print a clear GPU status report at startup.
+    Raises RuntimeError if CUDA is unavailable so you know immediately.
+    """
+    import logging
+    import torch
+
+    log = logging.getLogger("ocr_engine.cuda")
+
+    log.info("=== CUDA VERIFICATION ===")
+    log.info("torch version      : %s", torch.__version__)
+    log.info("CUDA available     : %s", torch.cuda.is_available())
+
+    if not torch.cuda.is_available():
+        log.error(
+            "CUDA IS NOT AVAILABLE.\n"
+            "Likely causes:\n"
+            "  1. You installed CPU-only PyTorch. Fix:\n"
+            "       pip uninstall torch torchvision torchaudio\n"
+            "       pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121\n"
+            "  2. CUDA toolkit not on PATH. Check: nvcc --version\n"
+            "  3. Driver too old for your PyTorch build.\n"
+            "     Driver required for CUDA 12.1: >= 525.60"
+        )
+        return False
+
+    log.info("CUDA version       : %s", torch.version.cuda)
+    log.info("cuDNN version      : %s", torch.backends.cudnn.version())
+    log.info("GPU count          : %d", torch.cuda.device_count())
+
+    for i in range(torch.cuda.device_count()):
+        props = torch.cuda.get_device_properties(i)
+        free, total = torch.cuda.mem_get_info(i)
+        log.info(
+            "GPU %d: %-30s  VRAM total=%d MB  free=%d MB",
+            i,
+            props.name,
+            total // (1024 ** 2),
+            free // (1024 ** 2),
+        )
+
+    # Quick smoke test: multiply two tensors on GPU
+    try:
+        a = torch.ones(1000, 1000, device="cuda", dtype=torch.bfloat16)
+        b = torch.ones(1000, 1000, device="cuda", dtype=torch.bfloat16)
+        _ = (a @ b).sum()
+        torch.cuda.synchronize()
+        log.info("GPU smoke test     : PASSED (bfloat16 matmul OK)")
+    except Exception as e:
+        log.error("GPU smoke test     : FAILED — %s", e)
+        return False
+
+    log.info("=== CUDA OK ===")
+    return True
+
+# ===========================================================================
+# FIX 2 — Updated _clean_deepseek_output (strips debug headers)
+# ===========================================================================
 def _clean_deepseek_output(text: str) -> str:
     """
-    Strip DeepSeek OCR grounding tags and bounding boxes from model output.
-    Raw output looks like:
-      <|ref|>text<|/ref|><|det|>[[60, 65, 959, 228]]<|/det|>
-      actual text content here
-    We keep only the actual text lines, preserving markdown structure.
+    Strip DeepSeek debug headers and grounding tags from model output.
+
+    The model always prints a header block like:
+        =====================
+        BASE:  torch.Size([1, 256, 1280])
+        PATCHES:  torch.Size([6, 144, 1280])   ← optional
+        =====================
+    followed optionally by:
+        ===============save results:===============
+    These must be removed before the text is useful.
     """
-    import re
-    # Remove <|ref|>...<|/ref|><|det|>...<|/det|> tag pairs (including multiline)
+    # Strip the leading ===...=== debug block (BASE/PATCHES/NO PATCHES lines)
+    text = re.sub(
+        r'^={3,}.*?={3,}\s*\n',
+        '',
+        text,
+        flags=re.DOTALL,
+    )
+    # Strip trailing ===save results:=== footer and everything after
+    text = re.sub(r'={3,}save results:={3,}.*$', '', text, flags=re.DOTALL)
+    # Remove DeepSeek grounding tags: <|ref|>...<|/ref|><|det|>...<|/det|>
     text = re.sub(r'<\|ref\|>.*?<\|/ref\|><\|det\|>.*?<\|/det\|>', '', text, flags=re.DOTALL)
-    # Remove any remaining special tokens like <|grounding|>, <|/grounding|>, etc.
+    # Remove any remaining special tokens
     text = re.sub(r'<\|[^|]+\|>', '', text)
-    # Collapse more than 2 consecutive newlines
+    # Collapse 3+ consecutive newlines to 2
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
@@ -57,7 +132,6 @@ def _read_deepseek_output_dir(out_dir: str) -> str:
     """
     import glob, os
 
-    # Extensions the model may write its text output as
     TEXT_EXTS = {".md", ".txt", ".json", ".html", ".tex"}
 
     best = ""
@@ -65,15 +139,30 @@ def _read_deepseek_output_dir(out_dir: str) -> str:
         if not os.path.isfile(fpath):
             continue
         if os.path.splitext(fpath)[1].lower() not in TEXT_EXTS:
-            continue  # skip images, binaries, etc.
+            continue
         try:
             candidate = open(fpath, encoding="utf-8", errors="strict").read()
             if len(candidate.strip()) > len(best.strip()):
                 best = candidate
         except (UnicodeDecodeError, Exception):
-            pass  # genuinely binary, skip
+            pass
     return best
 
+# ===========================================================================
+# Helper for fix 3: strip debug headers used in DeepSeekOCR2Adapter
+# ===========================================================================
+_DEEPSEEK_HEADER_RE = None  # compiled lazily
+
+def _strip_debug_header(text: str) -> str:
+    """Remove the ===BASE/PATCHES=== block and save-results footer."""
+    global _DEEPSEEK_HEADER_RE
+    if _DEEPSEEK_HEADER_RE is None:
+        _DEEPSEEK_HEADER_RE = re.compile(
+            r'^={3,}.*?={3,}\s*\n', re.DOTALL
+        )
+    text = _DEEPSEEK_HEADER_RE.sub('', text, count=1)
+    text = re.sub(r'={3,}save results:={3,}.*$', '', text, flags=re.DOTALL)
+    return text.strip()
 
 # ── Region types ─────────────────────────────────────────────────────────────
 
@@ -282,6 +371,7 @@ class DeepSeekOCRAdapter(BaseOCRAdapter):
 
 # ── DeepSeek OCR 2 ────────────────────────────────────────────────────────────
 # Same .infer() API as v1 but image_size=768, crop_mode=True per official docs.
+# Updated with fix 3: prefers result.mmd, GPU timing, CUDA checks
 
 class DeepSeekOCR2Adapter(BaseOCRAdapter):
     model_id = "deepseek-ocr-2"
@@ -308,35 +398,146 @@ class DeepSeekOCR2Adapter(BaseOCRAdapter):
         except Exception as e:
             logger.error("DeepSeek OCR-2 load failed: %s", e)
 
-    def process_image(self, image: Image.Image) -> str:
+    # FIX 3 – new process_image method
+    def process_image(self, image):
+        """
+        Drop-in replacement for DeepSeekOCR2Adapter.process_image.
+        Correctly sources text from .mmd file, with stdout as fallback.
+        Logs GPU timing and VRAM so you can confirm the GPU is being used.
+        """
+        import os
+        import shutil
+        import tempfile
+        import logging
+        import torch
+
+        log = logging.getLogger("ocr_engine")
+
         if not self._loaded:
+            log.warning("DeepSeek OCR-2 not loaded — using stub")
+            from ocr_engine import StubOCRAdapter
             return StubOCRAdapter().process_image(image)
+
+        # ── VRAM snapshot before ────────────────────────────────────────────────
+        if torch.cuda.is_available():
+            vram_before = torch.cuda.memory_allocated() // (1024 ** 2)
+            log.debug("VRAM before infer: %d MB", vram_before)
+        else:
+            log.warning(
+                "torch.cuda.is_available() = False at inference time! "
+                "Model is running on CPU. Check your PyTorch CUDA installation."
+            )
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            image.save(tmp.name)
+            tmp_path = tmp.name
+
+        out_dir = tempfile.mkdtemp()
+
         try:
-            import os, shutil
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                image.save(tmp.name)
-                tmp_path = tmp.name
-            out_dir = tempfile.mkdtemp()
-            try:
-                res = self._model.infer(
-                    self._tokenizer,
-                    prompt="<image>\nFree OCR. Convert the document to markdown, preserving structure and formatting. ",
-                    image_file=tmp_path,
-                    output_path=out_dir,
-                    base_size=1024,
-                    image_size=768,
-                    crop_mode=True,
-                    save_results=True,
+            # ── GPU timing ──────────────────────────────────────────────────────
+            if torch.cuda.is_available():
+                t_start = torch.cuda.Event(enable_timing=True)
+                t_end   = torch.cuda.Event(enable_timing=True)
+                t_start.record()
+
+            import time
+            wall_start = time.perf_counter()
+
+            res = self._model.infer(
+                self._tokenizer,
+                prompt=(
+                    "<image>\nFree OCR. Convert the document to markdown, "
+                    "preserving structure and formatting. "
+                ),
+                image_file=tmp_path,
+                output_path=out_dir,
+                base_size=1024,
+                image_size=768,
+                crop_mode=True,
+                save_results=True,
+            )
+
+            wall_ms = (time.perf_counter() - wall_start) * 1000
+
+            if torch.cuda.is_available():
+                t_end.record()
+                torch.cuda.synchronize()
+                gpu_ms = t_start.elapsed_time(t_end)
+                vram_after = torch.cuda.memory_allocated() // (1024 ** 2)
+                log.info(
+                    "infer() wall=%.0f ms  gpu=%.0f ms  VRAM %d→%d MB",
+                    wall_ms, gpu_ms, vram_before, vram_after,
                 )
-                text = res if isinstance(res, str) and res.strip() else _read_deepseek_output_dir(out_dir)
-                logger.info("DeepSeek OCR v2: got %d chars from out_dir=%s", len(text), out_dir)
-            finally:
-                os.unlink(tmp_path)
-                shutil.rmtree(out_dir, ignore_errors=True)
-            return _clean_deepseek_output(text) if text.strip() else "[DeepSeek OCR-2: empty result]"
-        except Exception as e:
-            logger.error("DeepSeek OCR-2 inference error: %s", e)
-            return f"[DeepSeek OCR-2 error: {e}]"
+                if gpu_ms < 100 and wall_ms > 500:
+                    log.warning(
+                        "GPU time (%.0f ms) << wall time (%.0f ms). "
+                        "Model may be running on CPU despite CUDA being available. "
+                        "Check that model weights are on the correct device.",
+                        gpu_ms, wall_ms,
+                    )
+            else:
+                log.info("infer() wall=%.0f ms (CPU)", wall_ms)
+
+            # ── Source priority ──────────────────────────────────────────────────
+            # 1. result.mmd — clean structured output written by the model
+            # 2. return value of infer() if non-empty string
+            # 3. stdout (captured by diagnostics wrapper) — noisy, strip header
+            # 4. any other text file in out_dir
+
+            mmd_path = os.path.join(out_dir, "result.mmd")
+            text = ""
+            source = "none"
+
+            if os.path.exists(mmd_path):
+                try:
+                    mmd_text = open(mmd_path, encoding="utf-8").read().strip()
+                    if mmd_text:
+                        text = mmd_text
+                        source = "result.mmd"
+                        log.debug("Using result.mmd (%d chars)", len(text))
+                except Exception as e:
+                    log.warning("Could not read result.mmd: %s", e)
+
+            if not text and isinstance(res, str) and res.strip():
+                text = res.strip()
+                source = "return_value"
+                log.debug("Using return value (%d chars)", len(text))
+
+            if not text:
+                # Scan for any other text file (original fallback)
+                from ocr_engine import _read_deepseek_output_dir
+                dir_text = _read_deepseek_output_dir(out_dir)
+                if dir_text.strip():
+                    text = dir_text.strip()
+                    source = "out_dir_scan"
+                    log.debug("Using out_dir scan (%d chars)", len(text))
+
+            log.info(
+                "DeepSeek OCR-2 source=%-15s  raw_chars=%d",
+                source, len(text),
+            )
+
+            if not text:
+                log.error(
+                    "DeepSeek OCR-2 produced NO TEXT. "
+                    "result.mmd was %s. "
+                    "If you see text in the terminal above, "
+                    "stdout capture is not active — ensure install_diagnostics() "
+                    "is called before the first OCR job.",
+                    "empty" if os.path.exists(mmd_path) else "missing",
+                )
+                return "[DeepSeek OCR-2: empty result]"
+
+        finally:
+            os.unlink(tmp_path)
+            shutil.rmtree(out_dir, ignore_errors=True)
+
+        # Clean and return
+        from ocr_engine import _clean_deepseek_output
+        cleaned = _clean_deepseek_output(text)
+        log.info("DeepSeek OCR-2 final chars=%d", len(cleaned))
+        return cleaned
 
 
 # ── PaddleOCR-VL 1.5 ─────────────────────────────────────────────────────────
