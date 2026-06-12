@@ -78,6 +78,10 @@ from jobs import (
 from model_registry import get_model, load_models
 from ocr_engine import run_ocr
 
+from ocr_diagnostics import install_diagnostics
+install_diagnostics()          # before app = FastAPI(...)
+
+
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------

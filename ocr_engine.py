@@ -50,6 +50,29 @@ def _best_attn() -> str:
         return "eager"
 
 
+def _read_deepseek_output_dir(out_dir: str) -> str:
+    """
+    Scan text files written by infer() to out_dir and return the largest one.
+    Skips binary files (images, etc.) that the model also writes to out_dir.
+    """
+    import glob, os
+
+    # Extensions the model may write its text output as
+    TEXT_EXTS = {".md", ".txt", ".json", ".html", ".tex"}
+
+    best = ""
+    for fpath in glob.glob(os.path.join(out_dir, "**", "*"), recursive=True):
+        if not os.path.isfile(fpath):
+            continue
+        if os.path.splitext(fpath)[1].lower() not in TEXT_EXTS:
+            continue  # skip images, binaries, etc.
+        try:
+            candidate = open(fpath, encoding="utf-8", errors="strict").read()
+            if len(candidate.strip()) > len(best.strip()):
+                best = candidate
+        except (UnicodeDecodeError, Exception):
+            pass  # genuinely binary, skip
+    return best
 
 
 # ── Region types ─────────────────────────────────────────────────────────────
@@ -214,8 +237,6 @@ class DeepSeekOCRAdapter(BaseOCRAdapter):
             self._tokenizer = AutoTokenizer.from_pretrained(
                 str(model_path), trust_remote_code=True
             )
-            # DeepSeek's custom model code bypasses _best_attn() and hard-requires
-            # flash_attn when flash_attention_2 is set. Always use eager instead.
             self._model = AutoModel.from_pretrained(
                 str(model_path),
                 _attn_implementation="eager",
@@ -232,7 +253,7 @@ class DeepSeekOCRAdapter(BaseOCRAdapter):
         if not self._loaded:
             return StubOCRAdapter().process_image(image)
         try:
-            import tempfile, os, glob
+            import os, shutil
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 image.save(tmp.name)
                 tmp_path = tmp.name
@@ -246,23 +267,12 @@ class DeepSeekOCRAdapter(BaseOCRAdapter):
                     base_size=1024,
                     image_size=640,
                     crop_mode=True,
-                    save_results=True,  # write to disk so we can read it back
+                    save_results=True,
                 )
-                # .infer() returns None and writes the result to a .md or .txt file
-                text = ""
-                if isinstance(res, str) and res.strip():
-                    text = res
-                else:
-                    # Search for any output file written by infer()
-                    for ext in ("*.md", "*.txt", "*.json"):
-                        files = glob.glob(os.path.join(out_dir, "**", ext), recursive=True)
-                        if files:
-                            with open(files[0], encoding="utf-8", errors="replace") as f:
-                                text = f.read()
-                            break
+                text = res if isinstance(res, str) and res.strip() else _read_deepseek_output_dir(out_dir)
+                logger.info("DeepSeek OCR v1: got %d chars from out_dir=%s", len(text), out_dir)
             finally:
                 os.unlink(tmp_path)
-                import shutil
                 shutil.rmtree(out_dir, ignore_errors=True)
             return _clean_deepseek_output(text) if text.strip() else "[DeepSeek OCR: empty result]"
         except Exception as e:
@@ -286,8 +296,6 @@ class DeepSeekOCR2Adapter(BaseOCRAdapter):
             self._tokenizer = AutoTokenizer.from_pretrained(
                 str(model_path), trust_remote_code=True
             )
-            # DeepSeek's custom model code bypasses _best_attn() and hard-requires
-            # flash_attn when flash_attention_2 is set. Always use eager instead.
             self._model = AutoModel.from_pretrained(
                 str(model_path),
                 _attn_implementation="eager",
@@ -304,7 +312,7 @@ class DeepSeekOCR2Adapter(BaseOCRAdapter):
         if not self._loaded:
             return StubOCRAdapter().process_image(image)
         try:
-            import tempfile, os, glob, shutil
+            import os, shutil
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 image.save(tmp.name)
                 tmp_path = tmp.name
@@ -318,19 +326,10 @@ class DeepSeekOCR2Adapter(BaseOCRAdapter):
                     base_size=1024,
                     image_size=768,
                     crop_mode=True,
-                    save_results=True,  # write to disk so we can read it back
+                    save_results=True,
                 )
-                # .infer() returns None and writes the result to a .md or .txt file
-                text = ""
-                if isinstance(res, str) and res.strip():
-                    text = res
-                else:
-                    for ext in ("*.md", "*.txt", "*.json"):
-                        files = glob.glob(os.path.join(out_dir, "**", ext), recursive=True)
-                        if files:
-                            with open(files[0], encoding="utf-8", errors="replace") as f:
-                                text = f.read()
-                            break
+                text = res if isinstance(res, str) and res.strip() else _read_deepseek_output_dir(out_dir)
+                logger.info("DeepSeek OCR v2: got %d chars from out_dir=%s", len(text), out_dir)
             finally:
                 os.unlink(tmp_path)
                 shutil.rmtree(out_dir, ignore_errors=True)
@@ -359,7 +358,7 @@ class PaddleOCRVLAdapter(BaseOCRAdapter):
             )
             self._model = AutoModelForCausalLM.from_pretrained(
                 str(model_path),
-                attn_implementation=_best_attn(),  # flash_attention_2 when available, eager fallback
+                attn_implementation=_best_attn(),
                 trust_remote_code=True,
                 torch_dtype=torch.bfloat16,
                 device_map="cuda",
@@ -375,7 +374,6 @@ class PaddleOCRVLAdapter(BaseOCRAdapter):
             return StubOCRAdapter().process_image(image)
         try:
             import torch
-            # PaddleOCR-VL supports task-specific prompts
             prompt = "Convert the document to markdown format, preserving tables, formulas, and structure."
             inputs = self._processor(
                 text=prompt, images=image, return_tensors="pt"
@@ -383,7 +381,6 @@ class PaddleOCRVLAdapter(BaseOCRAdapter):
             with torch.inference_mode():
                 ids = self._model.generate(**inputs, max_new_tokens=4096, temperature=0.0)
             output = self._processor.batch_decode(ids, skip_special_tokens=True)[0]
-            # Strip the prompt echo if present
             if prompt in output:
                 output = output.split(prompt)[-1].strip()
             return output
@@ -426,11 +423,10 @@ class GotOCR2Adapter(BaseOCRAdapter):
         if not self._loaded:
             return StubOCRAdapter().process_image(image)
         try:
-            import tempfile, os
+            import os
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 image.save(tmp.name)
                 tmp_path = tmp.name
-            # ocr_type="format" → markdown output with tables/formulas
             result = self._model.chat(
                 self._tokenizer,
                 tmp_path,
