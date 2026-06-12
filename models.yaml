@@ -1,0 +1,88 @@
+models:
+- adapter: deepseek_ocr
+  description: DeepSeek's first-generation OCR — strong on mixed text, tables, and
+    complex layouts. Uses custom .infer() API with bfloat16 + flash_attention_2.
+  downloaded: false
+  hf_tag: deepseek-ai/DeepSeek-OCR
+  id: deepseek-ocr
+  name: DeepSeek OCR
+  size_gb: 6.68
+  supports_diagram: true
+  supports_formula: false
+  supports_table: true
+- adapter: deepseek_ocr2
+  description: Second-gen DeepSeek OCR with improved layout and markdown conversion.
+    Same .infer() API as v1 but with enhanced visual encoder.
+  downloaded: true
+  hf_tag: deepseek-ai/DeepSeek-OCR-2
+  id: deepseek-ocr-2
+  name: DeepSeek OCR 2
+  size_gb: 6.79
+  supports_diagram: true
+  supports_formula: true
+  supports_table: true
+- adapter: paddleocr_vl
+  description: PaddlePaddle 0.9B compact VLM — SOTA on OmniDocBench. Weights are
+    only 1.92 GB. Requires flash_attention_2 to avoid VRAM explosion.
+  downloaded: true
+  hf_tag: PaddlePaddle/PaddleOCR-VL-1.5
+  id: paddleocr-vl
+  name: PaddleOCR-VL 1.5
+  size_gb: 1.92
+  supports_diagram: true
+  supports_formula: true
+  supports_table: true
+- adapter: got_ocr2
+  description: General OCR Theory v2 — 580M params, handles plain text, formulas,
+    tables, charts, and sheet music via simple prompts.
+  downloaded: false
+  hf_tag: stepfun-ai/GOT-OCR2_0
+  id: got-ocr-2
+  name: GOT-OCR 2.0
+  size_gb: 1.2
+  supports_diagram: true
+  supports_formula: true
+  supports_table: true
+- adapter: florence2
+  description: Microsoft Florence-2 Large — vision-language model for OCR, captioning,
+    and document understanding.
+  downloaded: false
+  hf_tag: microsoft/Florence-2-large
+  id: florence-2-large
+  name: Florence-2 Large
+  size_gb: 1.5
+  supports_diagram: true
+  supports_formula: false
+  supports_table: true
+- adapter: nougat
+  description: Meta Nougat — academic document OCR specialized in scientific papers
+    with LaTeX formulas and structured tables.
+  downloaded: false
+  hf_tag: facebook/nougat-large
+  id: nougat-large
+  name: Nougat Large
+  size_gb: 3.3
+  supports_diagram: false
+  supports_formula: true
+  supports_table: true
+- adapter: surya
+  description: Multilingual document OCR with line-level detection and layout analysis.
+    Uses the surya pip package.
+  downloaded: false
+  hf_tag: vikp/surya_rec
+  id: surya-ocr
+  name: Surya OCR
+  size_gb: 0.6
+  supports_diagram: false
+  supports_formula: false
+  supports_table: true
+- adapter: kosmos2
+  description: Microsoft KOSMOS-2 — multimodal grounding and scene-text OCR.
+  downloaded: false
+  hf_tag: microsoft/kosmos-2-patch14-224
+  id: kosmos-2
+  name: KOSMOS-2
+  size_gb: 6.5
+  supports_diagram: false
+  supports_formula: false
+  supports_table: false

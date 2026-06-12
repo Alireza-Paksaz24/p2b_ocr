@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OCR Converter</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d2e;
+      --surface2: #252840;
+      --border: #2e3158;
+      --accent: #6366f1;
+      --accent2: #818cf8;
+      --green: #22c55e;
+      --yellow: #eab308;
+      --red: #ef4444;
+      --text: #e2e4f0;
+      --muted: #7c7fa8;
+      --radius: 10px;
+      --font: 'Inter', system-ui, sans-serif;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 15px; }
+
+    /* ── Layout ── */
+    .app { display: grid; grid-template-rows: 56px 1fr; min-height: 100vh; }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 12px;
+      padding: 0 24px;
+    }
+    header .logo { font-size: 1.1rem; font-weight: 700; color: var(--accent2); letter-spacing: -.02em; }
+    header .logo span { color: var(--text); }
+    header nav { margin-left: auto; display: flex; gap: 4px; }
+    header nav button {
+      background: none; border: none; color: var(--muted); padding: 6px 14px;
+      border-radius: 6px; cursor: pointer; font-size: .875rem; transition: .15s;
+    }
+    header nav button:hover, header nav button.active { background: var(--surface2); color: var(--text); }
+
+    main { display: grid; grid-template-columns: 320px 1fr; height: calc(100vh - 56px); overflow: hidden; }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      padding: 20px;
+      display: flex; flex-direction: column; gap: 20px;
+    }
+
+    .panel-title { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 10px; }
+
+    /* ── Model selector ── */
+    .model-card {
+      background: var(--surface2);
+      border: 2px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      cursor: pointer;
+      transition: border-color .15s;
+      margin-bottom: 6px;
+    }
+    .model-card:hover { border-color: var(--accent); }
+    .model-card.selected { border-color: var(--accent); background: #1e2040; }
+    .model-card .model-name { font-weight: 600; font-size: .9rem; }
+    .model-card .model-meta { font-size: .75rem; color: var(--muted); margin-top: 3px; display: flex; gap: 8px; align-items: center; }
+    .model-card .model-desc { font-size: .78rem; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+    .badge {
+      font-size: .68rem; padding: 2px 7px; border-radius: 20px; font-weight: 600;
+      background: var(--border); color: var(--muted);
+    }
+    .badge.downloaded { background: #14532d; color: #4ade80; }
+    .badge.cap { background: #1e3a5f; color: #60a5fa; }
+
+    .dl-bar { height: 4px; background: var(--border); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+    .dl-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width .3s; }
+
+    /* ── Format checkboxes ── */
+    .fmt-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .fmt-label {
+      display: flex; align-items: center; gap: 6px;
+      background: var(--surface2); border: 2px solid var(--border);
+      border-radius: 8px; padding: 8px 14px; cursor: pointer;
+      font-size: .875rem; font-weight: 500; transition: border-color .15s;
+    }
+    .fmt-label:has(input:checked) { border-color: var(--accent); color: var(--accent2); }
+    .fmt-label input { display: none; }
+
+    /* ── Upload zone ── */
+    .content-area { overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: 14px;
+      padding: 48px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+    }
+    .drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); background: #1a1d2e88; }
+    .drop-zone .dz-icon { font-size: 2.5rem; margin-bottom: 10px; }
+    .drop-zone .dz-label { font-size: 1rem; font-weight: 600; margin-bottom: 6px; }
+    .drop-zone .dz-hint { font-size: .82rem; color: var(--muted); }
+    #file-input { display: none; }
+
+    .file-list { display: flex; flex-direction: column; gap: 6px; }
+    .file-item {
+      background: var(--surface2); border-radius: 8px; padding: 10px 14px;
+      display: flex; align-items: center; gap: 10px; font-size: .85rem;
+    }
+    .file-item .fi-icon { font-size: 1.2rem; }
+    .file-item .fi-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-item .fi-size { color: var(--muted); font-size: .78rem; }
+    .file-item .fi-remove { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 1.1rem; padding: 0 4px; }
+    .file-item .fi-remove:hover { color: var(--red); }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 11px 22px; border-radius: 8px; border: none; cursor: pointer;
+      font-size: .9rem; font-weight: 600; transition: .15s; text-decoration: none;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #4f46e5; }
+    .btn-primary:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+    .btn-outline { background: transparent; border: 1.5px solid var(--border); color: var(--text); }
+    .btn-outline:hover { border-color: var(--accent); color: var(--accent2); }
+    .btn-sm { padding: 7px 14px; font-size: .82rem; }
+    .btn-danger { background: #7f1d1d; color: #fca5a5; }
+    .btn-danger:hover { background: var(--red); color: #fff; }
+
+    /* ── Job queue / results ── */
+    .jobs-section { display: flex; flex-direction: column; gap: 12px; }
+
+    .job-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+    }
+    .job-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .job-name { font-weight: 600; font-size: .9rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .status-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .status-dot.pending { background: var(--muted); }
+    .status-dot.processing { background: var(--yellow); animation: pulse 1s infinite; }
+    .status-dot.done { background: var(--green); }
+    .status-dot.error { background: var(--red); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    .job-progress-bar { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin-bottom: 10px; }
+    .job-progress-fill { height: 100%; background: var(--accent); transition: width .4s; }
+    .job-meta { font-size: .78rem; color: var(--muted); margin-bottom: 10px; }
+    .job-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .summary-chip { font-size: .72rem; background: var(--surface2); border: 1px solid var(--border); border-radius: 20px; padding: 3px 10px; color: var(--muted); }
+    .job-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    /* ── Modal ── */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 100;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; pointer-events: none; transition: opacity .2s;
+    }
+    .modal-overlay.show { opacity: 1; pointer-events: all; }
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px 32px;
+      max-width: 480px; width: 90%;
+      transform: translateY(20px); transition: transform .2s;
+    }
+    .modal-overlay.show .modal { transform: translateY(0); }
+    .modal h3 { font-size: 1.1rem; margin-bottom: 8px; }
+    .modal p { color: var(--muted); font-size: .9rem; line-height: 1.6; margin-bottom: 20px; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+    /* ── Toast ── */
+    #toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 200; display: flex; flex-direction: column; gap: 8px; }
+    .toast {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px 18px; font-size: .875rem;
+      box-shadow: 0 8px 24px rgba(0,0,0,.4);
+      animation: slide-in .25s ease;
+    }
+    .toast.success { border-left: 4px solid var(--green); }
+    .toast.error { border-left: 4px solid var(--red); }
+    .toast.info { border-left: 4px solid var(--accent); }
+    @keyframes slide-in { from{transform:translateX(60px);opacity:0} to{transform:translateX(0);opacity:1} }
+
+    /* ── History tab ── */
+    .history-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    .history-table th { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; }
+    .history-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+    .history-table tr:last-child td { border-bottom: none; }
+
+    /* ── Responsive ── */
+    @media (max-width: 768px) {
+      main { grid-template-columns: 1fr; }
+      .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+    }
+
+    .empty-state { text-align: center; padding: 60px 24px; color: var(--muted); }
+    .empty-state .es-icon { font-size: 3rem; margin-bottom: 12px; }
+
+    .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .section-header h2 { font-size: 1rem; font-weight: 700; }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo">OCR<span>Converter</span></div>
+    <nav>
+      <button class="active" id="tab-convert" onclick="showTab('convert')">Convert</button>
+      <button id="tab-history" onclick="showTab('history')">History</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ── Sidebar ── -->
+    <aside class="sidebar">
+      <div>
+        <div class="panel-title">OCR Model</div>
+        <div id="model-list">
+          <div class="empty-state" style="padding:20px 0"><span class="es-icon">⏳</span><p>Loading models…</p></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="panel-title">Output Formats</div>
+        <div class="fmt-row">
+          <label class="fmt-label"><input type="checkbox" value="md" checked> 📝 Markdown</label>
+          <label class="fmt-label"><input type="checkbox" value="html"> 🌐 HTML</label>
+          <label class="fmt-label"><input type="checkbox" value="docx"> 📄 Word</label>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── Content ── -->
+    <div class="content-area">
+
+      <!-- Convert tab -->
+      <div id="view-convert">
+        <div class="section-header">
+          <h2>Upload Files</h2>
+        </div>
+
+        <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+          <div class="dz-icon">📂</div>
+          <div class="dz-label">Drop files here or click to browse</div>
+          <div class="dz-hint">Images (JPG, PNG, TIFF, WEBP), ZIP archives, or PDF files · Max 200MB each</div>
+        </div>
+        <input type="file" id="file-input" multiple accept=".jpg,.jpeg,.png,.tiff,.tif,.bmp,.webp,.gif,.zip,.pdf" />
+
+        <div id="file-list" class="file-list" style="margin-top:12px"></div>
+
+        <div style="margin-top:16px">
+          <button class="btn btn-primary" id="run-btn" onclick="submitOCR()" disabled>
+            <span>▶</span> Run OCR
+          </button>
+        </div>
+
+        <!-- Jobs -->
+        <div class="section-header" style="margin-top:28px">
+          <h2>Jobs</h2>
+          <button class="btn btn-outline btn-sm" onclick="loadJobs()">Refresh</button>
+        </div>
+        <div id="jobs-list" class="jobs-section">
+          <div class="empty-state"><div class="es-icon">🗂️</div><p>No jobs yet — upload files and run OCR to get started.</p></div>
+        </div>
+      </div>
+
+      <!-- History tab -->
+      <div id="view-history" style="display:none">
+        <div class="section-header">
+          <h2>Job History</h2>
+          <button class="btn btn-outline btn-sm" onclick="loadHistory()">Refresh</button>
+        </div>
+        <div id="history-content">
+          <div class="empty-state"><div class="es-icon">📋</div><p>Loading history…</p></div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<!-- Download confirm modal -->
+<div class="modal-overlay" id="dl-modal">
+  <div class="modal">
+    <h3 id="dl-modal-title">Download model?</h3>
+    <p id="dl-modal-body">This model isn't downloaded yet. Download it now? (~3 GB)</p>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="dl-modal-confirm">Download</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+const API = '';  // same origin
+let selectedModel = null;
+let pendingFiles = [];
+let activeDownloads = {};  // modelId → EventSource
+let activeJobs = {};       // jobId → EventSource
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+function showTab(name) {
+  document.getElementById('view-convert').style.display = name === 'convert' ? '' : 'none';
+  document.getElementById('view-history').style.display = name === 'history' ? '' : 'none';
+  document.getElementById('tab-convert').classList.toggle('active', name === 'convert');
+  document.getElementById('tab-history').classList.toggle('active', name === 'history');
+  if (name === 'history') loadHistory();
+}
+
+// ── Models ─────────────────────────────────────────────────────────────────
+async function loadModels() {
+  try {
+    const res = await fetch(`${API}/api/models`);
+    const data = await res.json();
+    renderModels(data.models);
+  } catch (e) {
+    document.getElementById('model-list').innerHTML =
+      `<p style="color:var(--red);font-size:.8rem">Failed to load models: ${e.message}</p>`;
+  }
+}
+
+function renderModels(models) {
+  const el = document.getElementById('model-list');
+  el.innerHTML = '';
+  for (const m of models) {
+    const card = document.createElement('div');
+    card.className = 'model-card' + (selectedModel === m.id ? ' selected' : '');
+    card.dataset.id = m.id;
+    const caps = [
+      m.supports_table && '<span class="badge cap">Tables</span>',
+      m.supports_diagram && '<span class="badge cap">Diagrams</span>',
+      m.supports_formula && '<span class="badge cap">Formulas</span>',
+    ].filter(Boolean).join('');
+    const dlState = m.download_state;
+    const isDownloading = dlState && dlState.status === 'downloading';
+    const dlProgress = dlState ? Math.round((dlState.progress || 0) * 100) : 0;
+
+    card.innerHTML = `
+      <div class="model-name">${m.name}</div>
+      <div class="model-meta">
+        <span class="badge ${m.downloaded ? 'downloaded' : ''}">${m.downloaded ? '✓ Ready' : `~${m.size_gb}GB`}</span>
+        ${caps}
+      </div>
+      <div class="model-desc">${m.description}</div>
+      ${isDownloading ? `
+        <div style="margin-top:8px;font-size:.75rem;color:var(--muted)">${dlState.message}</div>
+        <div class="dl-bar"><div class="dl-bar-fill" style="width:${dlProgress}%"></div></div>
+      ` : ''}
+    `;
+    card.addEventListener('click', () => selectModel(m));
+    el.appendChild(card);
+  }
+}
+
+function selectModel(model) {
+  if (!model.downloaded) {
+    openDownloadModal(model);
+    return;
+  }
+  selectedModel = model.id;
+  document.querySelectorAll('.model-card').forEach(c => {
+    c.classList.toggle('selected', c.dataset.id === model.id);
+  });
+  updateRunBtn();
+}
+
+// ── Download modal ─────────────────────────────────────────────────────────
+let _pendingDownloadModel = null;
+
+function openDownloadModal(model) {
+  _pendingDownloadModel = model;
+  document.getElementById('dl-modal-title').textContent = `Download ${model.name}?`;
+  document.getElementById('dl-modal-body').textContent =
+    `This model (~${model.size_gb} GB) hasn't been downloaded yet. Download it from Hugging Face now? Weights will be saved to ./models/${model.id}/`;
+  document.getElementById('dl-modal-confirm').onclick = () => startDownload(model);
+  document.getElementById('dl-modal').classList.add('show');
+}
+
+function closeModal() {
+  document.getElementById('dl-modal').classList.remove('show');
+  _pendingDownloadModel = null;
+}
+
+async function startDownload(model) {
+  closeModal();
+  try {
+    const res = await fetch(`${API}/api/models/${model.id}/download`, { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'already_downloaded') {
+      toast('Model already downloaded!', 'success');
+      loadModels();
+      return;
+    }
+    toast(`Downloading ${model.name}…`, 'info');
+    watchDownload(model.id);
+  } catch (e) {
+    toast(`Download failed: ${e.message}`, 'error');
+  }
+}
+
+function watchDownload(modelId) {
+  if (activeDownloads[modelId]) activeDownloads[modelId].close();
+  const es = new EventSource(`${API}/api/models/${modelId}/download/status`);
+  activeDownloads[modelId] = es;
+  es.onmessage = (e) => {
+    const state = JSON.parse(e.data);
+    updateDownloadBar(modelId, state);
+    if (state.status === 'done') {
+      toast(`Model downloaded successfully!`, 'success');
+      es.close();
+      delete activeDownloads[modelId];
+      loadModels();
+    } else if (state.status === 'error') {
+      toast(`Download error: ${state.error}`, 'error');
+      es.close();
+      delete activeDownloads[modelId];
+    }
+  };
+  es.onerror = () => { es.close(); delete activeDownloads[modelId]; };
+}
+
+function updateDownloadBar(modelId, state) {
+  const card = document.querySelector(`.model-card[data-id="${modelId}"]`);
+  if (!card) return;
+  let bar = card.querySelector('.dl-bar');
+  if (!bar) {
+    const info = document.createElement('div');
+    info.className = 'dl-info';
+    info.innerHTML = `<div style="margin-top:8px;font-size:.75rem;color:var(--muted)" class="dl-msg"></div>
+      <div class="dl-bar"><div class="dl-bar-fill" style="width:0%"></div></div>`;
+    card.appendChild(info);
+    bar = card.querySelector('.dl-bar');
+  }
+  const fill = card.querySelector('.dl-bar-fill');
+  const msg = card.querySelector('.dl-msg');
+  if (fill) fill.style.width = Math.round((state.progress || 0) * 100) + '%';
+  if (msg) msg.textContent = state.message || '';
+}
+
+// ── File upload ────────────────────────────────────────────────────────────
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  addFiles(Array.from(e.dataTransfer.files));
+});
+fileInput.addEventListener('change', () => {
+  addFiles(Array.from(fileInput.files));
+  fileInput.value = '';
+});
+
+function addFiles(files) {
+  for (const f of files) {
+    if (!pendingFiles.find(p => p.name === f.name && p.size === f.size)) {
+      pendingFiles.push(f);
+    }
+  }
+  renderFileList();
+  updateRunBtn();
+}
+
+function removeFile(idx) {
+  pendingFiles.splice(idx, 1);
+  renderFileList();
+  updateRunBtn();
+}
+
+function renderFileList() {
+  const el = document.getElementById('file-list');
+  if (!pendingFiles.length) { el.innerHTML = ''; return; }
+  el.innerHTML = pendingFiles.map((f, i) => `
+    <div class="file-item">
+      <span class="fi-icon">${fileIcon(f.name)}</span>
+      <span class="fi-name">${f.name}</span>
+      <span class="fi-size">${formatSize(f.size)}</span>
+      <button class="fi-remove" onclick="removeFile(${i})">✕</button>
+    </div>
+  `).join('');
+}
+
+function fileIcon(name) {
+  if (/\.pdf$/i.test(name)) return '📄';
+  if (/\.zip$/i.test(name)) return '🗜️';
+  return '🖼️';
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024**2) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/1024**2).toFixed(1) + ' MB';
+}
+
+function updateRunBtn() {
+  const btn = document.getElementById('run-btn');
+  btn.disabled = !selectedModel || pendingFiles.length === 0;
+}
+
+// ── OCR submission ─────────────────────────────────────────────────────────
+async function submitOCR() {
+  if (!selectedModel || !pendingFiles.length) return;
+
+  const formats = Array.from(document.querySelectorAll('.fmt-label input:checked'))
+    .map(i => i.value);
+  if (!formats.length) { toast('Select at least one output format', 'error'); return; }
+
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true;
+  btn.textContent = 'Submitting…';
+
+  const fd = new FormData();
+  pendingFiles.forEach(f => fd.append('files', f));
+  fd.append('model_id', selectedModel);
+  fd.append('output_formats', formats.join(','));
+
+  try {
+    const res = await fetch(`${API}/api/ocr`, { method: 'POST', body: fd });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Submission failed');
+    }
+    const data = await res.json();
+    pendingFiles = [];
+    renderFileList();
+    toast(`Job submitted! ID: ${data.job_id.slice(0,8)}…`, 'success');
+    watchJob(data.job_id);
+    loadJobs();
+  } catch (e) {
+    toast(`Error: ${e.message}`, 'error');
+  } finally {
+    btn.textContent = '▶ Run OCR';
+    updateRunBtn();
+  }
+}
+
+// ── Jobs ───────────────────────────────────────────────────────────────────
+async function loadJobs() {
+  try {
+    const res = await fetch(`${API}/api/jobs`);
+    const data = await res.json();
+    renderJobs(data.jobs);
+  } catch (e) {
+    console.error('Failed to load jobs', e);
+  }
+}
+
+function renderJobs(jobs) {
+  const el = document.getElementById('jobs-list');
+  if (!jobs.length) {
+    el.innerHTML = '<div class="empty-state"><div class="es-icon">🗂️</div><p>No jobs yet.</p></div>';
+    return;
+  }
+  el.innerHTML = jobs.map(j => jobCardHTML(j)).join('');
+}
+
+function jobCardHTML(j) {
+  const pct = Math.round((j.progress || 0) * 100);
+  const summary = j.content_summary ? Object.entries(j.content_summary)
+    .map(([k,v]) => `<span class="summary-chip">${v} ${k}</span>`).join('') : '';
+  const actions = j.status === 'done' ? `
+    ${Object.keys(j.output_files||{}).map(fmt => `
+      <a href="${API}/api/jobs/${j.job_id}/download/${fmt}" class="btn btn-outline btn-sm" download>
+        ⬇ ${fmt.toUpperCase()}
+      </a>`).join('')}
+    <a href="${API}/api/jobs/${j.job_id}/download-all" class="btn btn-primary btn-sm" download>⬇ All (ZIP)</a>
+  ` : '';
+  const name = (j.original_filename || 'Job').split(',')[0];
+  return `
+    <div class="job-card" id="job-${j.job_id}">
+      <div class="job-header">
+        <div class="status-dot ${j.status}"></div>
+        <div class="job-name" title="${j.original_filename}">${name}</div>
+        <span style="font-size:.75rem;color:var(--muted)">${j.model_id || ''}</span>
+      </div>
+      ${j.status === 'processing' ? `
+        <div class="job-progress-bar"><div class="job-progress-fill" style="width:${pct}%"></div></div>
+      ` : ''}
+      <div class="job-meta">
+        ${j.status} · ${j.page_count ? j.page_count + ' page(s) · ' : ''}${j.duration_seconds ? j.duration_seconds + 's' : ''}
+        ${j.error ? `<span style="color:var(--red)"> · ${j.error}</span>` : ''}
+      </div>
+      ${summary ? `<div class="job-summary">${summary}</div>` : ''}
+      ${actions ? `<div class="job-actions">${actions}</div>` : ''}
+    </div>`;
+}
+
+function watchJob(jobId) {
+  if (activeJobs[jobId]) activeJobs[jobId].close();
+  const es = new EventSource(`${API}/api/jobs/${jobId}/progress`);
+  activeJobs[jobId] = es;
+  es.onmessage = (e) => {
+    const job = JSON.parse(e.data);
+    updateJobCard(job);
+    if (job.status === 'done') {
+      toast('OCR complete!', 'success');
+      es.close(); delete activeJobs[jobId];
+    } else if (job.status === 'error') {
+      toast(`OCR failed: ${job.error}`, 'error');
+      es.close(); delete activeJobs[jobId];
+    }
+  };
+  es.onerror = () => { es.close(); delete activeJobs[jobId]; };
+}
+
+function updateJobCard(job) {
+  const existing = document.getElementById(`job-${job.job_id}`);
+  const newHTML = jobCardHTML(job);
+  if (existing) {
+    existing.outerHTML = newHTML;
+  } else {
+    const list = document.getElementById('jobs-list');
+    if (list.querySelector('.empty-state')) list.innerHTML = '';
+    list.insertAdjacentHTML('afterbegin', newHTML);
+  }
+}
+
+// ── History ────────────────────────────────────────────────────────────────
+async function loadHistory() {
+  const el = document.getElementById('history-content');
+  try {
+    const res = await fetch(`${API}/api/history`);
+    const data = await res.json();
+    if (!data.enabled) {
+      el.innerHTML = `<div class="empty-state"><div class="es-icon">🗄️</div>
+        <p>History is disabled. Set <code>ENABLE_DB=true</code> in your <code>.env</code> file.</p></div>`;
+      return;
+    }
+    if (!data.items.length) {
+      el.innerHTML = `<div class="empty-state"><div class="es-icon">📋</div><p>No history yet.</p></div>`;
+      return;
+    }
+    el.innerHTML = `
+      <table class="history-table">
+        <thead><tr>
+          <th>File</th><th>Model</th><th>Formats</th><th>Pages</th><th>Status</th><th>Date</th><th></th>
+        </tr></thead>
+        <tbody>${data.items.map(j => `
+          <tr>
+            <td>${j.original_filename || '-'}</td>
+            <td>${j.model_name || j.model_id || '-'}</td>
+            <td>${(j.output_formats||[]).join(', ')}</td>
+            <td>${j.page_count || '-'}</td>
+            <td><span class="status-dot ${j.status}" style="display:inline-block;margin-right:4px"></span>${j.status}</td>
+            <td style="color:var(--muted)">${j.created_at ? new Date(j.created_at).toLocaleDateString() : '-'}</td>
+            <td><button class="btn btn-danger btn-sm" onclick="deleteHistory('${j.job_id}')">Delete</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  } catch (e) {
+    el.innerHTML = `<p style="color:var(--red)">Failed to load history: ${e.message}</p>`;
+  }
+}
+
+async function deleteHistory(jobId) {
+  try {
+    await fetch(`${API}/api/history/${jobId}`, { method: 'DELETE' });
+    toast('Entry deleted', 'success');
+    loadHistory();
+  } catch (e) {
+    toast(`Delete failed: ${e.message}`, 'error');
+  }
+}
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+function toast(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+loadModels();
+loadJobs();
+setInterval(loadModels, 8000);  // refresh model states (download progress)
+</script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+# OCR App Configuration
+
+# App
+APP_HOST=0.0.0.0
+APP_PORT=8000
+APP_DEBUG=false
+
+# Storage — set ENABLE_DB=true to persist jobs and history in SQLite
+ENABLE_DB=true
+
+# Database URL — default SQLite; swap for postgresql://user:pass@host/db later
+DATABASE_URL=sqlite:///./db/ocr_history.db
+
+# Model storage path (relative to project root)
+MODELS_DIR=./models
+
+# Upload / output dirs
+UPLOADS_DIR=./uploads
+OUTPUTS_DIR=./outputs
+
+# Max upload size in MB
+MAX_UPLOAD_MB=200
+
+# Worker concurrency (how many OCR jobs run in parallel)
+OCR_WORKERS=1

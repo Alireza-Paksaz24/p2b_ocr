@@ -1,35 +1,36 @@
-# Web framework & server
-fastapi>=0.110.0
-uvicorn[standard]>=0.27.0
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
 python-multipart>=0.0.9
-sse-starlette>=1.8.2
-
-# Environment & logging
-python-dotenv>=1.0.0
-loguru>=0.7.0
-
-# Async file handling
 aiofiles>=23.2.1
+python-dotenv>=1.0.1
+pyyaml>=6.0.1
+sqlalchemy>=2.0.30
+pillow>=10.3.0
+pdf2image>=1.17.0
+python-docx>=1.2.0
+markdown2>=2.4.13
+huggingface_hub>=0.23.0
+tqdm>=4.66.4
+transformers>=4.46.0,<5.0.0
+torch>=2.2.0
+torchvision>=0.17.0
 
-# Image processing & PDF
-Pillow>=10.0.0
-pdf2image>=1.16.3
+# DeepSeek OCR / OCR-2 dependencies
+addict
+matplotlib
+requests
+einops
+easydict
 
-# Document generation
-python-docx>=1.0.0
-markdown>=3.5.0
+# Florence-2 / general vision deps
+timm>=0.9.0
 
-# ML / DL
-torch>=2.0.0
-transformers>=4.40.0
-accelerate>=0.28.0
+# Flash Attention 2 — dramatically reduces VRAM (compile takes ~5 min on first install)
+# pip install flash-attn --no-build-isolation
+# flash-attn>=2.5.0
 
-# Hugging Face Hub
-huggingface-hub>=0.23.0
+# Surya OCR — manages its own model weights
+# pip install surya-ocr
 
-# Surya OCR (one of the supported models)
-surya-ocr>=0.4.0
-
-# Database (optional; required if ENABLE_DB=true)
-sqlalchemy[asyncio]>=2.0.0
-aiosqlite>=0.19.02
+# Optional Tesseract fallback
+# pytesseract>=0.3.10
